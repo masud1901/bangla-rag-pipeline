@@ -18,9 +18,18 @@ class Settings(BaseSettings):
     app_name: str = "Multilingual RAG System"
     debug: bool = False
     
-    # Vector Database Configuration
+    # Embedding Configuration
+    embedding_provider: str = "cohere"  # Options: "cohere", "openai", "both"
     embedding_dimension: int = 1024  # Cohere embed-multilingual-v3.0 dimension
-    top_k_retrieval: int = 8  # Number of chunks to retrieve (increased from 5)
+    openai_embedding_dimension: int = 1536  # OpenAI text-embedding-3-small dimension
+    
+    # Vector Database Configuration
+    top_k_retrieval: int = 12  # Number of chunks to retrieve (increased for better coverage)
+    relevance_threshold: float = 0.5  # Minimum relevance score (lowered from 0.6)
+    
+    # Reranking Configuration
+    enable_reranking: bool = True  # Enable Cohere rerank for better accuracy
+    rerank_top_k: int = 6  # Final number of chunks after reranking
     
     class Config:
         env_file = ".env"

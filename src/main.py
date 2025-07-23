@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 
 from src.core.config import settings
 from src.core.models import QueryRequest, QueryResponse, HealthResponse, ErrorResponse
-from src.services.embedding_service import CohereEmbeddingService
-from src.services.vector_store_service import PineconeVectorStore
+from src.services.embedding_service import get_embedding_service
+from src.services.vector_store_service import ChromaVectorStore
 from src.services.llm_service import OpenAILLMService
+from src.services.rerank_service import CohereRerankService
 from src.pipeline.qa import QAPipeline
 
 # Configure logging
@@ -25,16 +26,27 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Application startup: Initializing services...")
     try:
-        app_state["embedding_service"] = CohereEmbeddingService()
-        app_state["vector_store"] = PineconeVectorStore()
+        app_state["embedding_service"] = get_embedding_service()
+        app_state["vector_store"] = ChromaVectorStore()
         app_state["llm_service"] = OpenAILLMService()
+        
+        # Initialize rerank service if enabled
+        if settings.enable_reranking:
+            try:
+                app_state["rerank_service"] = CohereRerankService()
+                logger.info("Rerank service initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize rerank service: {e}")
+                app_state["rerank_service"] = None
+        else:
+            app_state["rerank_service"] = None
 
         app_state["qa_pipeline"] = QAPipeline(
             embedding_service=app_state["embedding_service"],
             vector_store=app_state["vector_store"],
             llm_service=app_state["llm_service"]
         )
-        logger.info("All services initialized successfully.")
+        logger.info(f"All services initialized successfully with provider: {settings.embedding_provider}")
     except Exception as e:
         logger.error(f"Failed to initialize services: {e}", exc_info=True)
         # You might want to handle this more gracefully, e.g., by preventing the app from starting
@@ -47,7 +59,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    description="A RAG system for Bengali and English queries.",
+    description="A RAG system for Bengali and English queries with hybrid embeddings and reranking.",
     version="1.0.0",
     lifespan=lifespan,
     responses={422: {"model": ErrorResponse}, 500: {"model": ErrorResponse}}
@@ -78,18 +90,28 @@ async def health_check():
         "embedding_service": "ok" if app_state.get("embedding_service") else "error",
         "vector_store": "ok" if app_state.get("vector_store") else "error",
         "llm_service": "ok" if app_state.get("llm_service") else "error",
+        "rerank_service": "ok" if app_state.get("rerank_service") else ("disabled" if not settings.enable_reranking else "error")
     }
 
-    is_healthy = all(status == "ok" for status in services_status.values())
+    is_healthy = all(status in ["ok", "disabled"] for status in services_status.values())
+
+    # Get vector store stats
+    vector_store = app_state.get("vector_store")
+    index_stats = vector_store.get_index_stats() if vector_store else {}
 
     return HealthResponse(
         status="healthy" if is_healthy else "degraded",
         service=settings.app_name,
         config={
-            "pinecone_index": settings.pinecone_index_name,
+            "embedding_provider": settings.embedding_provider,
             "embedding_dimension": settings.embedding_dimension,
+            "openai_embedding_dimension": settings.openai_embedding_dimension,
             "top_k_retrieval": settings.top_k_retrieval,
-            "llm_model": app_state.get("llm_service").model_name if app_state.get("llm_service") else "N/A"
+            "relevance_threshold": settings.relevance_threshold,
+            "rerank_enabled": settings.enable_reranking,
+            "rerank_top_k": settings.rerank_top_k,
+            "llm_model": app_state.get("llm_service").model_name if app_state.get("llm_service") else "N/A",
+            "index_stats": index_stats
         },
         services_status=services_status
     )
@@ -110,6 +132,92 @@ async def query_endpoint(request: QueryRequest, qa_pipeline: QAPipeline = Depend
         return response
     except Exception as e:
         logger.error(f"Error processing query '{request.query}': {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Internal Server Error", "message": str(e)}
+        )
+
+@app.post("/debug/retrieve", tags=["Debug"])
+async def debug_retrieve_endpoint(request: QueryRequest):
+    """
+    Debug endpoint to inspect retrieval and reranking scores without generating an answer.
+    """
+    try:
+        embedding_service = app_state.get("embedding_service")
+        vector_store = app_state.get("vector_store")
+        rerank_service = app_state.get("rerank_service")
+        
+        if not embedding_service or not vector_store:
+            raise HTTPException(status_code=503, detail="Services not available")
+        
+        # Get embeddings
+        provider = settings.embedding_provider.lower()
+        if provider == "both":
+            dual_embeddings = embedding_service.embed_query(request.query)
+            retrieved_chunks = vector_store.search_dual_embeddings(
+                dual_query_embeddings=dual_embeddings,
+                top_k=request.top_k or settings.top_k_retrieval
+            )
+        else:
+            query_embedding = embedding_service.embed_query(request.query)
+            collection_name = "openai" if provider == "openai" else "cohere"
+            retrieved_chunks = vector_store.search_similar_chunks(
+                query_embedding=query_embedding,
+                collection_name=collection_name,
+                top_k=request.top_k or settings.top_k_retrieval
+            )
+        
+        # Apply reranking if available
+        reranked_chunks = []
+        if rerank_service and retrieved_chunks:
+            try:
+                reranked_chunks = rerank_service.rerank_chunks(
+                    query=request.query,
+                    chunks=retrieved_chunks,
+                    top_k=settings.rerank_top_k
+                )
+            except Exception as e:
+                logger.warning(f"Reranking failed in debug endpoint: {e}")
+        
+        # Format debug response
+        debug_info = {
+            "query": request.query,
+            "embedding_provider": provider,
+            "retrieved_chunks_count": len(retrieved_chunks),
+            "reranked_chunks_count": len(reranked_chunks),
+            "settings": {
+                "top_k_retrieval": settings.top_k_retrieval,
+                "relevance_threshold": settings.relevance_threshold,
+                "rerank_enabled": settings.enable_reranking,
+                "rerank_top_k": settings.rerank_top_k
+            },
+            "retrieved_chunks": [
+                {
+                    "chunk_id": chunk.get('chunk_id'),
+                    "page_number": chunk.get('page_number'),
+                    "relevance_score": chunk.get('score', 0.0),
+                    "text_preview": chunk.get('text', '')[:200] + "..." if len(chunk.get('text', '')) > 200 else chunk.get('text', ''),
+                    "retrieval_source": chunk.get('retrieval_source', 'unknown')
+                }
+                for chunk in retrieved_chunks[:10]  # Show top 10
+            ],
+            "reranked_chunks": [
+                {
+                    "chunk_id": chunk.get('chunk_id'),
+                    "page_number": chunk.get('page_number'),
+                    "original_score": chunk.get('score', 0.0),
+                    "rerank_score": chunk.get('rerank_score', 0.0),
+                    "text_preview": chunk.get('text', '')[:200] + "..." if len(chunk.get('text', '')) > 200 else chunk.get('text', ''),
+                    "original_index": chunk.get('original_index')
+                }
+                for chunk in reranked_chunks
+            ]
+        }
+        
+        return debug_info
+        
+    except Exception as e:
+        logger.error(f"Error in debug retrieve endpoint: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={"error": "Internal Server Error", "message": str(e)}

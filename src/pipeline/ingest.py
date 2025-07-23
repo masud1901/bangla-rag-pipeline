@@ -3,7 +3,7 @@
 Data Ingestion Pipeline for Multilingual RAG System
 
 This script processes the HSC26 Bangla 1st paper PDF, extracts text,
-chunks it semantically, generates embeddings, and stores in Pinecone.
+chunks it semantically, generates embeddings, and stores in ChromaDB.
 """
 
 import sys
@@ -14,7 +14,7 @@ from typing import Dict, Any
 
 from src.services.document_loader import PDFDocumentLoader
 from src.services.text_processor import TextProcessor
-from src.services.embedding_service import CohereEmbeddingService
+from src.services.embedding_service import get_embedding_service
 from src.services.vector_store_service import ChromaVectorStore
 from src.core.config import settings
 
@@ -35,9 +35,10 @@ class DataIngestionPipeline:
         
         self.document_loader = PDFDocumentLoader()
         self.text_processor = TextProcessor()
-        self.embedding_service = CohereEmbeddingService()
+        self.embedding_service = get_embedding_service()
         self.vector_store = ChromaVectorStore()
         
+        logger.info(f"Embedding provider: {settings.embedding_provider}")
         logger.info("All services initialized successfully")
     
     def process_document(self, pdf_path: str) -> Dict[str, Any]:
@@ -75,24 +76,43 @@ class DataIngestionPipeline:
             results["steps_completed"].append("text_chunking")
             logger.info(f"Created {chunk_stats['total_chunks']} chunks")
             
-            # Step 3: Generate embeddings
+            # Step 3: Generate embeddings (dual or single based on provider)
             logger.info("Step 3: Generating embeddings")
-            chunks_with_embeddings = self.embedding_service.embed_chunks(chunks)
-            embedding_info = self.embedding_service.get_embedding_info()
+            provider = settings.embedding_provider.lower()
             
-            results["embedding_info"] = embedding_info
-            results["steps_completed"].append("embedding_generation")
-            logger.info(f"Generated embeddings for {len(chunks_with_embeddings)} chunks")
+            if provider == "both":
+                # Generate dual embeddings
+                dual_chunks = self.embedding_service.embed_chunks(chunks)
+                embedding_info = self.embedding_service.get_embedding_info()
+                
+                results["embedding_info"] = embedding_info
+                results["steps_completed"].append("dual_embedding_generation")
+                logger.info(f"Generated dual embeddings for {len(chunks)} chunks")
+                
+                # Step 4: Store in dual vector databases
+                logger.info("Step 4: Storing vectors in dual ChromaDB collections")
+                upsert_results = self.vector_store.upsert_dual_embeddings(dual_chunks)
+                
+            else:
+                # Generate single embeddings
+                chunks_with_embeddings = self.embedding_service.embed_chunks(chunks)
+                embedding_info = self.embedding_service.get_embedding_info()
+                
+                results["embedding_info"] = embedding_info
+                results["steps_completed"].append("embedding_generation")
+                logger.info(f"Generated embeddings for {len(chunks_with_embeddings)} chunks")
+                
+                # Step 4: Store in vector database
+                logger.info("Step 4: Storing vectors in ChromaDB")
+                collection_name = "openai" if provider == "openai" else "cohere"
+                upsert_results = self.vector_store.upsert_chunks(chunks_with_embeddings, collection_name)
             
-            # Step 4: Store in vector database
-            logger.info("Step 4: Storing vectors in ChromaDB")
-            upsert_results = self.vector_store.upsert_chunks(chunks_with_embeddings)
             index_stats = self.vector_store.get_index_stats()
             
             results["upsert_results"] = upsert_results
             results["index_stats"] = index_stats
             results["steps_completed"].append("vector_storage")
-            logger.info(f"Stored {upsert_results['upserted_count']} vectors")
+            logger.info(f"Stored vectors successfully")
             
             results["status"] = "success"
             logger.info("Pipeline completed successfully!")
@@ -115,6 +135,7 @@ class DataIngestionPipeline:
         print(f"Status: {results['status'].upper()}")
         print(f"PDF Processed: {results['pdf_path']}")
         print(f"Steps Completed: {', '.join(results['steps_completed'])}")
+        print(f"Embedding Provider: {settings.embedding_provider}")
         
         if "document_stats" in results:
             stats = results["document_stats"]
@@ -133,15 +154,38 @@ class DataIngestionPipeline:
         if "embedding_info" in results:
             info = results["embedding_info"]
             print(f"\nEmbedding Information:")
-            print(f"  - Model: {info['model_name']}")
-            print(f"  - Dimension: {info['dimension']}")
-            print(f"  - Provider: {info['provider']}")
+            if isinstance(info, dict) and "cohere" in info:
+                # Dual embeddings
+                print(f"  - Cohere Model: {info['cohere']['model_name']}")
+                print(f"  - Cohere Dimension: {info['cohere']['dimension']}")
+                print(f"  - OpenAI Model: {info['openai']['model_name']}")
+                print(f"  - OpenAI Dimension: {info['openai']['dimension']}")
+            else:
+                # Single embedding
+                print(f"  - Model: {info['model_name']}")
+                print(f"  - Dimension: {info['dimension']}")
+                print(f"  - Provider: {info['provider']}")
         
         if "upsert_results" in results:
             upsert = results["upsert_results"]
             print(f"\nVector Storage:")
-            print(f"  - Vectors Stored: {upsert['upserted_count']}")
-            print(f"  - Collection: {upsert.get('collection_name', upsert.get('index_name', 'N/A'))}")
+            if isinstance(upsert, dict) and "cohere" in upsert:
+                # Dual storage
+                print(f"  - Cohere Vectors: {upsert['cohere']['upserted_count']}")
+                print(f"  - OpenAI Vectors: {upsert['openai']['upserted_count']}")
+            else:
+                # Single storage
+                print(f"  - Vectors Stored: {upsert['upserted_count']}")
+                print(f"  - Collection: {upsert.get('collection_name', 'N/A')}")
+        
+        if "index_stats" in results:
+            stats = results["index_stats"]
+            print(f"\nFinal Index Statistics:")
+            if "summary" in stats:
+                summary = stats["summary"]
+                print(f"  - Total Vectors: {summary['total_vectors']}")
+                print(f"  - Collections: {', '.join(summary['collections'])}")
+                print(f"  - Provider: {summary['embedding_provider']}")
         
         if results["errors"]:
             print(f"\nErrors:")
