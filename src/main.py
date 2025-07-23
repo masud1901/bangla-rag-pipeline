@@ -1,7 +1,13 @@
 import logging
+import os
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
+# Disable ChromaDB telemetry globally
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY_ENABLED"] = "False"
+os.environ["CHROMA_SERVER_TELEMETRY_ENABLED"] = "False"
 
 from src.core.config import settings
 from src.core.models import QueryRequest, QueryResponse, HealthResponse, ErrorResponse
@@ -130,11 +136,23 @@ async def query_endpoint(request: QueryRequest, qa_pipeline: QAPipeline = Depend
     try:
         response = qa_pipeline.answer_query(request)
         return response
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request error for query '{request.query}': {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "External API Error", "message": "Failed to connect to external services. Please try again."}
+        )
+    except ValueError as e:
+        logger.error(f"Validation error for query '{request.query}': {e}")
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Invalid Request", "message": str(e)}
+        )
     except Exception as e:
-        logger.error(f"Error processing query '{request.query}': {e}", exc_info=True)
+        logger.error(f"Unexpected error processing query '{request.query}': {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail={"error": "Internal Server Error", "message": str(e)}
+            detail={"error": "Internal Server Error", "message": "An unexpected error occurred. Please try again later."}
         )
 
 @app.post("/debug/retrieve", tags=["Debug"])

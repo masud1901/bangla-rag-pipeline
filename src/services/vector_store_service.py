@@ -1,8 +1,14 @@
 import chromadb
 import logging
 import time
+import os
 from typing import List, Dict, Any, Optional
 from src.core.config import settings
+
+# Disable ChromaDB telemetry
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY_ENABLED"] = "False"
+os.environ["CHROMA_SERVER_TELEMETRY_ENABLED"] = "False"
 
 logger = logging.getLogger(__name__)
 
@@ -223,33 +229,23 @@ class ChromaVectorStore:
     
     def get_index_stats(self) -> Dict[str, Any]:
         """
-        Get statistics about all vector collections.
+        Get statistics about the vector store.
         
         Returns:
-            Dictionary with collection statistics
+            Dictionary with index statistics
         """
+        stats = {}
         try:
-            stats = {}
-            total_vectors = 0
-            
             for name, collection in self.collections.items():
                 count = collection.count()
-                stats[name] = {
-                    "total_vectors": count,
-                    "collection_name": f"{self.base_collection_name}-{name}",
-                }
-                total_vectors += count
+                stats[f"{name}_vector_count"] = count
             
-            stats["summary"] = {
-                "total_vectors": total_vectors,
-                "collections": list(self.collections.keys()),
-                "embedding_provider": settings.embedding_provider
-            }
-            
+            # Add total count
+            stats["total_vectors"] = sum(stats.values())
             return stats
             
         except Exception as e:
-            logger.error(f"Error getting collection stats: {e}")
+            logger.error(f"Failed to get index stats: {e}")
             return {"error": str(e)}
     
     def delete_all_vectors(self, collection_name: str = None) -> Dict[str, Any]:

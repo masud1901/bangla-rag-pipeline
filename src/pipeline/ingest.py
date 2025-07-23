@@ -41,12 +41,13 @@ class DataIngestionPipeline:
         logger.info(f"Embedding provider: {settings.embedding_provider}")
         logger.info("All services initialized successfully")
     
-    def process_document(self, pdf_path: str) -> Dict[str, Any]:
+    def process_document(self, pdf_path: str, skip_failed_ocr: bool = True) -> Dict[str, Any]:
         """
         Process a PDF document through the complete pipeline.
         
         Args:
             pdf_path: Path to the PDF file
+            skip_failed_ocr: Whether to skip pages that fail OCR
             
         Returns:
             Processing results and statistics
@@ -60,7 +61,12 @@ class DataIngestionPipeline:
         try:
             # Step 1: Extract text from PDF
             logger.info("Step 1: Extracting text from PDF")
-            extracted_pages = self.document_loader.extract_text_from_pdf(pdf_path)
+            extracted_pages = self.document_loader.extract_text_from_pdf(
+                pdf_path, 
+                use_cache=True, 
+                use_parallel=True, 
+                skip_failed_ocr=skip_failed_ocr
+            )
             doc_stats = self.document_loader.get_document_stats(extracted_pages)
             
             results["document_stats"] = doc_stats

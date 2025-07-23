@@ -50,6 +50,8 @@ class SourceChunk(BaseModel):
 class QueryResponse(BaseModel):
     """Response model for the /query endpoint."""
     
+    model_config = {"protected_namespaces": ()}
+    
     question: str = Field(..., description="The original question")
     answer: str = Field(..., description="The generated answer")
     
