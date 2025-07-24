@@ -195,55 +195,55 @@ make ingest-clear PDF_NAME=your_document.pdf
 ## 🎯 Assessment Questions & Answers
 
 ### What method or library did you use to extract the text, and why? Did you face any formatting challenges with the PDF content?
-**Answer**: We implemented a robust, hybrid text extraction strategy using **PyMuPDF (`fitz`)** for digitally native text and **Tesseract OCR** for image-based or scanned text.
+**Answer**: I implemented a robust, hybrid text extraction strategy using **PyMuPDF (`fitz`)** for digitally native text and **Tesseract OCR** for image-based or scanned text.
 
 - **Why this approach?**
-    - **PyMuPDF** is exceptionally fast and accurate for extracting text directly embedded within a PDF. It served as our primary, high-speed extractor.
-    - **Tesseract OCR** was our essential fallback for pages that returned little or no text from PyMuPDF, indicating they were images. Tesseract has strong support for the Bengali language (`ben`), which was critical for processing the "HSC Bangla 1st paper" document.
-    - To optimize performance, we implemented **parallel processing** for the OCR step and **cached the results**, making subsequent ingestions of the same document almost instantaneous.
+    - **PyMuPDF** is exceptionally fast and accurate for extracting text directly embedded within a PDF. It served as my primary, high-speed extractor.
+    - **Tesseract OCR** was my essential fallback for pages that returned little or no text from PyMuPDF, indicating they were images. Tesseract has strong support for the Bengali language (`ben`), which was critical for processing the "HSC Bangla 1st paper" document.
+    - To optimize performance, I implemented **parallel processing** for the OCR step and **cached the results**, making subsequent ingestions of the same document almost instantaneous.
 
 - **Formatting Challenges Faced**:
-    - **Mixed Content**: The primary PDF contained both digital text and scanned pages, making a single extraction method insufficient. Our hybrid approach solved this automatically.
-    - **Two-Column Layouts**: Some pages featured two-column text, which can disrupt reading order. While our current method extracts text linearly, it proved sufficient for good retrieval.
-    - **OCR Inaccuracies**: OCR on Bengali text, especially with older prints, sometimes struggled with complex conjunct characters (যুক্তবর্ণ). This is a known challenge that our system mitigates but highlights an area for future improvement.
+    - **Mixed Content**: The primary PDF contained both digital text and scanned pages, making a single extraction method insufficient. My hybrid approach solved this automatically.
+    - **Two-Column Layouts**: Some pages featured two-column text, which can disrupt reading order. While my current method extracts text linearly, it proved sufficient for good retrieval.
+    - **OCR Inaccuracies**: OCR on Bengali text, especially with older prints, sometimes struggled with complex conjunct characters (যুক্তবর্ণ). This is a known challenge that my system mitigates but highlights an area for future improvement.
 
 ### What chunking strategy did you choose and why do you think it works well for semantic retrieval?
-**Answer**: We chose the **`RecursiveCharacterTextSplitter`**, a sophisticated strategy that preserves the semantic integrity of the text.
+**Answer**: I chose the **`RecursiveCharacterTextSplitter`**, a sophisticated strategy that preserves the semantic integrity of the text.
 
 - **Why it's effective for semantic retrieval**:
-    - **Maintains Cohesion**: This method attempts to split text along a prioritized list of separators, starting with the most semantically significant ones. For our Bengali content, we defined a custom separator list: `["।", "?", "!", "\n\n", "\n", " "]`. This means the splitter tries to keep full paragraphs and sentences intact before resorting to smaller splits, which is crucial for generating meaningful embeddings.
-    - **Optimal Chunk Size**: We configured a `chunk_size` of 1000 characters. This is a balance—large enough to contain a complete idea but small enough to provide a focused, low-noise context for the LLM.
-    - **Contextual Overlap**: We set a `chunk_overlap` of 200 characters. This creates a "sliding window" between chunks, ensuring that concepts spanning a chunk boundary are fully captured in at least one of the chunks, preventing context loss.
+    - **Maintains Cohesion**: This method attempts to split text along a prioritized list of separators, starting with the most semantically significant ones. For my Bengali content, I defined a custom separator list: `["।", "?", "!", "\n\n", "\n", " "]`. This means the splitter tries to keep full paragraphs and sentences intact before resorting to smaller splits, which is crucial for generating meaningful embeddings.
+    - **Optimal Chunk Size**: I configured a `chunk_size` of 1000 characters. This is a balance—large enough to contain a complete idea but small enough to provide a focused, low-noise context for the LLM.
+    - **Contextual Overlap**: I set a `chunk_overlap` of 200 characters. This creates a "sliding window" between chunks, ensuring that concepts spanning a chunk boundary are fully captured in at least one of the chunks, preventing context loss.
 
-By creating chunks that are semantically whole, we generate more accurate vector representations, leading directly to more relevant and precise search results.
+By creating chunks that are semantically whole, I generate more accurate vector representations, leading directly to more relevant and precise search results.
 
 ### What embedding model did you use? Why did you choose it? How does it capture the meaning of the text?
-**Answer**: We implemented a powerful **dual-embedding strategy**, leveraging two state-of-the-art models simultaneously: **Cohere's `embed-multilingual-v3.0`** and **OpenAI's `text-embedding-3-small`**.
+**Answer**: I implemented a powerful **dual-embedding strategy**, leveraging two state-of-the-art models simultaneously: **Cohere's `embed-multilingual-v3.0`** and **OpenAI's `text-embedding-3-small`**.
 
 - **Why a dual-model approach?**
-    - **Cohere `embed-multilingual-v3.0`**: This model was specifically chosen for its exceptional performance in over 100 languages, including Bengali. It excels at creating a shared "meaning space" where similar concepts in different languages are mapped to nearby vectors, which is perfect for our core multilingual requirement.
-    - **OpenAI `text-embedding-3-small`**: This is a highly performant and efficient model that provides a robust, general-purpose understanding of text. We included it to capture nuances and to provide a complementary perspective on the text's meaning.
+    - **Cohere `embed-multilingual-v3.0`**: This model was specifically chosen for its exceptional performance in over 100 languages, including Bengali. It excels at creating a shared "meaning space" where similar concepts in different languages are mapped to nearby vectors, which is perfect for my core multilingual requirement.
+    - **OpenAI `text-embedding-3-small`**: This is a highly performant and efficient model that provides a robust, general-purpose understanding of text. I included it to capture nuances and to provide a complementary perspective on the text's meaning.
 
 - **How it works**:
-    During ingestion, every chunk is embedded using both models and stored in separate collections in our ChromaDB vector store. During a query, the user's question is also embedded twice, and we search both collections. This ensemble approach increases the chances of finding the most relevant content by drawing from the unique strengths of two different world-class models.
+    During ingestion, every chunk is embedded using both models and stored in separate collections in my ChromaDB vector store. During a query, the user's question is also embedded twice, and I search both collections. This ensemble approach increases the chances of finding the most relevant content by drawing from the unique strengths of two different world-class models.
 
 ### How are you comparing the query with your stored chunks? Why did you choose this similarity method and storage setup?
-**Answer**: Our retrieval process is a multi-stage pipeline designed for high precision, using **ChromaDB** for storage, **Cosine Similarity** for the initial search, and **Cohere's Rerank** for refinement.
+**Answer**: My retrieval process is a multi-stage pipeline designed for high precision, using **ChromaDB** for storage, **Cosine Similarity** for the initial search, and **Cohere's Rerank** for refinement.
 
-- **Storage (ChromaDB)**: We chose ChromaDB because it's a lightweight, developer-friendly, and open-source vector database that is easy to containerize and deploy. Its file-based persistence is perfect for our project, ensuring embeddings are saved across sessions.
+- **Storage (ChromaDB)**: I chose ChromaDB because it's a lightweight, developer-friendly, and open-source vector database that is easy to containerize and deploy. Its file-based persistence is perfect for my project, ensuring embeddings are saved across sessions.
 - **Similarity Search (Cosine Similarity)**: This is the standard for comparing high-dimensional text embeddings. It measures the angle between two vectors, focusing purely on their semantic direction rather than their magnitude. This makes it excellent at identifying chunks with similar *meaning*, regardless of their length.
-- **Refinement (Cohere Rerank)**: This is our critical final step. After retrieving an initial set of chunks with cosine similarity, we pass them to Cohere's Rerank endpoint. This is a more advanced model (a cross-encoder) that directly compares the query text against each chunk to produce a highly accurate relevance score. This significantly improves the final quality of the context sent to the LLM, ensuring only the most relevant information is used to generate the answer.
+- **Refinement (Cohere Rerank)**: This is my critical final step. After retrieving an initial set of chunks with cosine similarity, I pass them to Cohere's Rerank endpoint. This is a more advanced model (a cross-encoder) that directly compares the query text against each chunk to produce a highly accurate relevance score. This significantly improves the final quality of the context sent to the LLM, ensuring only the most relevant information is used to generate the answer.
 
 ### How do you ensure that the question and the document chunks are compared meaningfully? What would happen if the query is vague or missing context?
-**Answer**: We ensure meaningful comparison through our multi-layered retrieval and generation strategy.
+**Answer**: I ensure meaningful comparison through my multi-layered retrieval and generation strategy.
 
 - **Ensuring Meaningful Comparison**:
     1.  **Dual-Embedding Ensemble**: Using two distinct, high-quality embedding models provides a more robust semantic match than relying on a single model's interpretation.
-    2.  **Sophisticated Reranking**: The Cohere Rerank model acts as a powerful judge, re-ordering the initial search results based on a deeper, contextual comparison between the query and each chunk. This is our primary mechanism for ensuring relevance.
+    2.  **Sophisticated Reranking**: The Cohere Rerank model acts as a powerful judge, re-ordering the initial search results based on a deeper, contextual comparison between the query and each chunk. This is my primary mechanism for ensuring relevance.
     3.  **Context-Aware Prompting**: The final prompt sent to the LLM is engineered to instruct it to synthesize an answer *exclusively* from the provided, reranked context, which minimizes hallucinations.
 
 - **Handling Vague or Context-Free Queries**:
-    Our system is designed to handle ambiguity gracefully. If a query like "tell me more" is entered:
+    My system is designed to handle ambiguity gracefully. If a query like "tell me more" is entered:
     - The initial vector search might retrieve a broad set of thematically related chunks.
     - The reranking model will attempt to find the most relevant chunks from this set, but the relevance scores may be low.
     - The LLM, seeing a diverse and potentially unfocused context, is instructed to either synthesize a general summary based on the available information or, if the context is completely irrelevant, to state that it cannot provide a specific answer from the documents. This prevents the model from inventing information.
